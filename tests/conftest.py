@@ -5,10 +5,10 @@ from pathlib import Path
 from iaomai.outages import preprocess_outages_data
 
 MIN_OUTAGE_DURATION = pd.Timedelta(days=0)
-DATA_PATH = Path("../data/unavailability")
+DATA_PATH = Path("data/unavailability")
 
 
-@pytest.fixture(scope="package")
+@pytest.fixture
 def swiss_outages():
     raw_data = pd.read_csv(
         DATA_PATH / "unavailability_ch_20160101_20310101.csv", parse_dates=True
@@ -18,7 +18,7 @@ def swiss_outages():
     )
 
 
-@pytest.fixture(scope="package")
+@pytest.fixture
 def french_outages():
     raw_data = pd.read_csv(
         DATA_PATH / "unavailability_fr_20160101_20310101.csv", parse_dates=True

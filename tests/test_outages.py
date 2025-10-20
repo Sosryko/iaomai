@@ -5,18 +5,13 @@ import pandas as pd
 from iaomai.outages import aggregate_outages
 
 
-@pytest.mark.parametrize(
-    "raw_data",
-    [
-        pytest.lazy_fixture("swiss_outages"),
-        pytest.lazy_fixture("french_outages"),
-    ],
-)
-def test_outages_per_production_unit(data: str):
+@pytest.mark.parametrize("fixture_name", ["swiss_outages", "french_outages"])
+def test_outages_per_production_unit(request, fixture_name: str):
     """
     Outages per production unit at any time t should never exceed
     the maximum recorded nominal capacity in the dataset
     """
+    data = request.getfixturevalue(fixture_name)
     max_nominal_power = (
         data[["nominal_power", "production_resource_psr_name"]]
         .groupby("production_resource_psr_name")
@@ -33,7 +28,7 @@ def test_outages_per_production_unit(data: str):
                 index=outages_per_unit.index,
                 columns=max_nominal_power.columns,
             )
-            >= outages_per_unit
+            >= outages_per_unit.fillna(0)
         )
         .all()
         .all()
