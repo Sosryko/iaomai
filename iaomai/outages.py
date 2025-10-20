@@ -1,3 +1,4 @@
+import structlog
 import numpy as np
 import pandas as pd
 import pandera as pa
@@ -39,13 +40,11 @@ def preprocess_outages_data(
     Returns:
         pd.DataFrame:
     """
-    raw_data["end"] = pd.to_datetime(raw_data["end"], utc=True).dt.tz_convert("CET")
-    raw_data["start"] = pd.to_datetime(raw_data["start"], utc=True).dt.tz_convert("CET")
+    raw_data["end"] = pd.to_datetime(raw_data["end"], utc=True).dt.tz_convert(None)
+    raw_data["start"] = pd.to_datetime(raw_data["start"], utc=True).dt.tz_convert(None)
     # some outages are duplicated in the dataframe with all fields identical but the time resolution
     raw_data = raw_data.drop(columns=["resolution"]).drop_duplicates()
-    # give unique id to each outage
-    # easier to read than mrid
-    # TODO: go back to mrid if outages for all countries stored in the same space
+    # give unique id to each outage: string to int
     raw_data["unique_id"] = np.arange(0, raw_data.shape[0])
 
     if generation_type not in raw_data["plant_type"].unique():
@@ -75,6 +74,12 @@ def preprocess_outages_data(
             "mrid",
         ),
     ]
+    # businesstype and production_resource_psr_name to categories
+    # filtered_data["businesstype"] = pd.Categorical(filtered_data["businesstype"])
+    # filtered_data["production_resource_psr_name"] = pd.Categorical(
+    #     filtered_data["production_resource_psr_name"]
+    # )
+
     filtered_data = filtered_data.reset_index(drop=True)
     filtered_data["delta"] = filtered_data["nominal_power"] - pd.to_numeric(
         filtered_data["avail_qty"]
@@ -82,7 +87,12 @@ def preprocess_outages_data(
     return filtered_data.drop_duplicates()
 
 
-def aggregate_outages(filtered_data: pd.DataFrame, by: str) -> pd.DataFrame:
+LOGGER = structlog.getLogger()
+
+
+def aggregate_outages(
+    filtered_data: pd.DataFrame, by: str, verbose: bool = False
+) -> pd.DataFrame:
     """
     Aggregates ENTSOE outage data
 
@@ -100,13 +110,17 @@ def aggregate_outages(filtered_data: pd.DataFrame, by: str) -> pd.DataFrame:
     Returns:
         pd.DataFrame
     """
-    pivot_data = filtered_data.pivot_table(
+    if verbose:
+        LOGGER.info("Pivot table")
+    pivot_data = filtered_data.pivot(
         values="delta",
         index=("start", "end"),
         columns=("unique_id", "businesstype", "production_resource_psr_name"),
     )
     # outage start and end date in same index
     # list of outages to timeseries "moment"
+    if verbose:
+        LOGGER.info("Concat")
     pivot_data = pd.concat(
         [
             pivot_data.droplevel("start", axis=0),
@@ -118,15 +132,15 @@ def aggregate_outages(filtered_data: pd.DataFrame, by: str) -> pd.DataFrame:
     # for example, some outages start at the same moment for different units
     # remove duplicated elements in index by grouping by date and taking the max
     # max: because outages can overlap but each time a new availability is given
-    pivot_data = (
-        pivot_data.groupby(pivot_data.index)
-        .max()
-        .replace({0: np.nan})
-        .sort_index()
-        .ffill(limit_area="inside", axis=0)
-    )
-    # max: because outages can overlap but for each new outage a new availability is given
+    if verbose:
+        LOGGER.info("Removing duplicated dates")
+    pivot_data = pivot_data.groupby(pivot_data.index).max().replace({0: np.nan})
+    if verbose:
+        LOGGER.info("Sort and interpolate dataframe")
+    pivot_data = pivot_data.sort_index().ffill(limit_area="inside", axis=0)
     # conservative side: take the max unavailability value
+    if verbose:
+        LOGGER.info("Removing duplicated outages")
     pivot_data = (
         pivot_data.droplevel(["unique_id"], axis=1)
         .T.groupby(
